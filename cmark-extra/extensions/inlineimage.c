@@ -226,7 +226,11 @@ char *get_base64_image(const char *url, MimeCheck *mime_callback, void *mime_con
         }
     }
     
-    if (access(image_path, F_OK | R_OK) == 0) {
+    // Open the file directly instead of access()-then-fopen(): the access()
+    // check and the open were two separate path lookups (TOCTOU race).
+    // fopen() failing now covers both "does not exist" and "not readable".
+    FILE * f = fopen((const char *)image_path, "rb");
+    if (f) {
         if (mime_callback != NULL) {
             mime = mime_callback(image_path, mime_context);
         } else {
@@ -235,34 +239,29 @@ char *get_base64_image(const char *url, MimeCheck *mime_callback, void *mime_con
         if (!mime || !startsWith("image/", mime)) {
             os_log_error(getLogForImageExt(), "%{private}s (%{public}s) is not an image!", image_path, mime);
             fprintf(stderr, "%s (%s) is not an image!", image_path, mime);
+            fclose(f);
             goto continue_loop;
         }
-        
+
         char * buffer = 0;
         long length = 0;
-        FILE * f = fopen((const char *)image_path, "rb");
-        if (f) {
-            fseek (f, 0, SEEK_END);
-            length = ftell(f);
-            fseek (f, 0, SEEK_SET);
-            buffer = malloc(length);
-            if (buffer) {
-                fread(buffer, 1, length, f);
-            }
-            fclose(f);
-            
-            char *data = b64_encode((const unsigned char *)buffer, length);
-            size_t encoded_length = strlen(data);
-            
-            encoded = (char *)calloc(strlen(mime) + strlen("data:;base64,") + encoded_length + 1, sizeof(char));
-            sprintf(encoded, "data:%s;base64,%s", mime, data);
-            
-            free(data);
-            free(buffer);
-        } else {
-            os_log_error(getLogForImageExt(), "Error to get magic for file %{private}s:, %{public}s (%{public}d)!", image_path, strerror(errno), errno);
-            fprintf(stderr, "Error to get magic for file %s: %s (#%d)!\n", image_path, strerror(errno), errno);
+        fseek (f, 0, SEEK_END);
+        length = ftell(f);
+        fseek (f, 0, SEEK_SET);
+        buffer = malloc(length);
+        if (buffer) {
+            fread(buffer, 1, length, f);
         }
+        fclose(f);
+
+        char *data = b64_encode((const unsigned char *)buffer, length);
+        size_t encoded_length = strlen(data);
+
+        encoded = (char *)calloc(strlen(mime) + strlen("data:;base64,") + encoded_length + 1, sizeof(char));
+        sprintf(encoded, "data:%s;base64,%s", mime, data);
+
+        free(data);
+        free(buffer);
     } else {
         os_log_error(getLogForImageExt(), "Unable to open file %{private}s: %{public}s (%{public}d)!", image_path, strerror(errno), errno);
         fprintf(stderr, "Unable to open file %s: %s (#%d)!\n", image_path, strerror(errno), errno);
