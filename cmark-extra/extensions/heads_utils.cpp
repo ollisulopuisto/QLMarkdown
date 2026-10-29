@@ -13,6 +13,7 @@
 #include <string>
 #include <codecvt>
 #include <iostream>
+#include <cstdlib>
 
 #ifdef REGEX_LIBRARY
 #include <regex>
@@ -56,7 +57,12 @@ static char * wstringToChar(wstring str) {
 
     // Count required buffer size (plus one for null-terminator).
     size_t size = (wcslen(input) + 1) * sizeof(wchar_t);
-    char *buffer = new char[size];
+    // Allocated with malloc (not new[]) because callers are C code
+    // (heads.c) that release the returned buffer with free().
+    char *buffer = (char *)malloc(size);
+    if (buffer == nullptr) {
+        return nullptr;
+    }
 
     #ifdef __STDC_LIB_EXT1__
         // wcstombs_s is only guaranteed to be available if __STDC_LIB_EXT1__ is defined
